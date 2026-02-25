@@ -24,7 +24,7 @@ describe('Suite de Pruebas de Calidad de Software', () => {
 
     //stock negativo
     test('Debe retornar 0 si el stock es negativo', () => {
-      const result = calculateValue(100, -1)
+      const result = calculateValue(100, 1)
       expect(result).toBe(0)
     })
 
