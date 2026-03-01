@@ -2,7 +2,7 @@ name: K6 Load Tests
 
 on:
   push:
-    branches: [ "master" ]
+    branches: [ "main" ]
   workflow_dispatch:
 
 jobs:
