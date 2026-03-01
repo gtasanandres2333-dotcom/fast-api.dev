@@ -1,33 +1,25 @@
 name: K6 Load Tests
-
 on:
   push:
     branches: [ "main" ]
   workflow_dispatch:
-
 jobs:
   k6-load-test:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
-
       - name: Use Node.js 22.x
         uses: actions/setup-node@v4
         with:
           node-version: 22.x
           cache: 'npm'
-
       - name: Install dependencies
         run: npm install
-
       - name: Start server in background
         run: npm start &
-
       - name: Wait for server to be ready
         run: npx wait-on http://localhost:3000/health --timeout 15000
-
       - name: Install K6
         run: |
           sudo apt-get update
@@ -36,18 +28,14 @@ jobs:
           echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
           sudo apt-get update
           sudo apt-get install k6 -y
-
-       - name: Run K6 load tests
-        run: |
-          k6 run k6/load-test.js \
-            --out experimental-prometheus-rw=${{ secrets.GRAFANA_URL }}
+      - name: Run K6 load tests
         env:
           BASE_URL: http://localhost:3000
+          K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.GRAFANA_URL }}
           K6_PROMETHEUS_RW_USERNAME: ${{ secrets.GRAFANA_USERNAME }}
           K6_PROMETHEUS_RW_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
           K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM: true
-          K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.GRAFANA_URL }}
-
+        run: k6 run k6/load-test.js --out experimental-prometheus-rw
       - name: Upload K6 results
         uses: actions/upload-artifact@v4
         with:
