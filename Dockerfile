@@ -8,6 +8,9 @@ RUN npm install
 
 COPY . .
 
+RUN useradd -m appuser
+USER appuser
+
 EXPOSE 3000
 
 CMD ["npm","start"]
