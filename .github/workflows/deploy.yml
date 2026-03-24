@@ -9,12 +9,82 @@ env:
   IMAGE_NAME: ${{ github.repository }}
 
 jobs:
+  # FASE 1: Análisis de Calidad con SonarQube
+  sonarqube-analysis:
+    name: "Fase 1 - Análisis de Calidad (SonarQube)"
+    runs-on: ubuntu-latest
+    steps:
+      - name: Clonacion del repositorio
+        uses: actions/checkout@v3
+        with:
+          fetch-depth: 0
+
+      - name: Ejecucion de Escaner SonarQube
+        uses: SonarSource/sonarqube-scan-action@master
+        env:
+          SONAR_TOKEN: ${{ secrets.SONAR_TOKEN }}
+          SONAR_HOST_URL: ${{ secrets.SONAR_HOST_URL }}
+        with:
+          args: >
+            -Dsonar.projectKey=mi-proyecto-gestion-sw
+            -Dsonar.qualitygate.wait=true
+
+  # FASE 2: Pruebas de Rendimiento con K6
+  k6-load-test:
+    name: "Fase 2 - Prueba de Rendimiento (K6)"
+    needs: sonarqube-analysis
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Use Node.js 22.x
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm install
+
+      - name: Start server in background
+        run: npm start &
+
+      - name: Wait for server to be ready
+        run: npx wait-on http://localhost:3000/health --timeout 15000
+
+      - name: Install K6
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y gnupg
+          curl -s https://dl.k6.io/key.gpg | sudo apt-key add -
+          echo "deb https://dl.k6.io/deb stable main" | sudo tee /etc/apt/sources.list.d/k6.list
+          sudo apt-get update
+          sudo apt-get install k6 -y
+
+      - name: Run K6 load tests
+        env:
+          BASE_URL: http://localhost:3000
+          K6_PROMETHEUS_RW_SERVER_URL: ${{ secrets.GRAFANA_URL }}
+          K6_PROMETHEUS_RW_USERNAME: ${{ secrets.GRAFANA_USERNAME }}
+          K6_PROMETHEUS_RW_PASSWORD: ${{ secrets.GRAFANA_PASSWORD }}
+          K6_PROMETHEUS_RW_TREND_AS_NATIVE_HISTOGRAM: true
+        run: k6 run k6/load-test.js --out experimental-prometheus-rw
+
+      - name: Upload K6 results
+        uses: actions/upload-artifact@v4
+        with:
+          name: k6-results
+          path: k6/results.json
+
+  # FASE 3: Empaquetado Docker y push a GHCR
   build-and-push:
+    name: "Fase 3 - Empaquetado (Docker → GHCR)"
+    needs: k6-load-test
     runs-on: ubuntu-latest
     permissions:
       contents: read
       packages: write
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -26,7 +96,7 @@ jobs:
           username: ${{ github.actor }}
           password: ${{ secrets.GITHUB_TOKEN }}
 
-      - name: Extract metadata (tags, labels) for Docker
+      - name: Extract metadata for Docker
         id: meta
         uses: docker/metadata-action@v5
         with:
@@ -40,7 +110,9 @@ jobs:
           tags: ${{ steps.meta.outputs.tags }}
           labels: ${{ steps.meta.outputs.labels }}
 
+  # FASE 4: Despliegue Automático en servidor cloud
   deploy:
+    name: "Fase 4 - Despliegue Automático (CD)"
     needs: build-and-push
     runs-on: ubuntu-latest
     steps:
@@ -51,17 +123,10 @@ jobs:
           username: ${{ secrets.SERVER_USER }}
           key: ${{ secrets.SSH_PRIVATE_KEY }}
           script: |
-            # Autenticarse en GHCR dentro del servidor
             echo ${{ secrets.GITHUB_TOKEN }} | docker login ghcr.io -u ${{ github.actor }} --password-stdin
-            
-            # Detener y eliminar el contenedor anterior si existe
             docker stop my-node-app || true
             docker rm my-node-app || true
-            
-            # Descargar la versión más reciente (pull)
             docker pull ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}:main
-            
-            # Ejecutar el nuevo contenedor
             docker run -d \
               --name my-node-app \
               -p 80:3000 \
